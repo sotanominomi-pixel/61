@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>N Clock 完全版</title>
+<style>
+body { font-family:-apple-system,sans-serif; background:#fff; color:#000; text-align:center; padding:30px;}
+#display { font-size:3em; margin-bottom:20px;}
+button { font-size:1em; margin:5px; padding:10px 20px; }
+#alarmArea, #stopwatchArea, #settingsArea { margin-top:20px; }
+.alarm-card { display:flex; justify-content:space-between; padding:8px; border:1px solid #ccc; margin:5px 0; border-radius:8px;}
+.toggle { width:50px; height:28px; border-radius:14px; background:#ccc; position:relative; cursor:pointer;}
+.toggle.on { background:#4cd964; }
+.thumb { width:24px; height:24px; border-radius:12px; background:#fff; position:absolute; top:2px; left:2px; transition:0.3s;}
+.toggle.on .thumb { left:24px; }
+input[type=range] { width:80%; margin-top:10px; }
+</style>
+</head>
+<body>
+<div id="display">00:00:00</div>
+
+<div id="stopwatchArea">
+<button id="swStart">Start</button>
+<button id="swLap">Lap</button>
+<button id="swReset">Reset</button>
+<div id="lapList"></div>
+</div>
+
+<div id="alarmArea">
+<input type="time" id="alarmTime">
+<button id="alarmSetBtn">アラーム追加</button>
+<div id="alarmsContainer"></div>
+<audio id="alarmSound" src="https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg" preload="auto"></audio>
+</div>
+
+<div id="settingsArea">
+<label>秒数表示 <input type="checkbox" id="secondsToggle" checked></label><br>
+<label>言語
+<select id="langSelectSettings">
+<option value="ja">日本語</option>
+<option value="en">English</option>
+</select>
+</label><br>
+<label>1日の長さ
+<input type="range" id="dayLengthSlider" min="12" max="48" value="24">
+<span id="dayLengthValue">24h</span>
+</label>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', ()=>{
+  const display = document.getElementById('display');
+  let showSeconds = true;
+  let dayLength = 24; // 1日の長さ (時間)
+  let speedFactor = 1; // 1秒の進む速度補正
+
+  const secondsToggle = document.getElementById('secondsToggle');
+  secondsToggle.addEventListener('change',()=>{ showSeconds=secondsToggle.checked; });
+
+  const dayLengthSlider = document.getElementById('dayLengthSlider');
+  const dayLengthValue = document.getElementById('dayLengthValue');
+  dayLengthSlider.addEventListener('input',()=>{
+    dayLength = Number(dayLengthSlider.value);
+    dayLengthValue.textContent = dayLength+'h';
+    speedFactor = 24/dayLength; // 24時間基準で速さ調整
+  });
+
+  const langSelect = document.getElementById('langSelectSettings');
+  let lang = langSelect.value;
+  langSelect.addEventListener('change',()=>{ lang=langSelect.value; });
+
+  // 時計
+  let virtualTime = new Date();
+  function tick(){
+    virtualTime = new Date(virtualTime.getTime() + 1000*speedFactor);
+    let h = String(virtualTime.getHours()).padStart(2,'0');
+    let m = String(virtualTime.getMinutes()).padStart(2,'0');
+    let s = String(virtualTime.getSeconds()).padStart(2,'0');
+    display.textContent = showSeconds ? `${h}:${m}:${s}` : `${h}:${m}`;
+    checkAlarms(virtualTime);
+    setTimeout(tick,1000);
+  }
+  tick();
+
+  // Stopwatch
+  const swStart = document.getElementById('swStart');
+  const swLap = document.getElementById('swLap');
+  const swReset = document.getElementById('swReset');
+  const lapList = document.getElementById('lapList');
+  let running=false, elapsedMs=0, lastFrame=performance.now(), laps=[];
+  function formatStopwatch(ms){
+    const total = Math.floor(ms/1000);
+    const h=Math.floor(total/3600);
+    const m=Math.floor(total/60)%60;
+    const s=total%60;
+    return h>0?`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`:`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  }
+  function renderLaps(){ lapList.innerHTML=''; laps.forEach((t,i)=>{ const node=document.createElement('div'); node.textContent=`Lap ${laps.length-i}: ${t}`; lapList.appendChild(node); }); }
+  function swTick(now){ if(running){ const dt=now-lastFrame; elapsedMs+=dt; lastFrame=now; } else { lastFrame=now; } requestAnimationFrame(swTick); }
+  requestAnimationFrame(swTick);
+  swStart.addEventListener('click',()=>{ running=!running; swStart.textContent=running?'Stop':'Start'; lastFrame=performance.now(); });
+  swLap.addEventListener('click',()=>{ laps.unshift(formatStopwatch(elapsedMs)); renderLaps(); });
+  swReset.addEventListener('click',()=>{ elapsedMs=0; laps=[]; renderLaps(); });
+
+  // Alarm
+  const alarmTimeInput = document.getElementById('alarmTime');
+  const alarmSetBtn = document.getElementById('alarmSetBtn');
+  const alarmsContainer = document.getElementById('alarmsContainer');
+  const alarmSound = document.getElementById('alarmSound');
+  let alarms = [];
+  function renderAlarms(){
+    alarmsContainer.innerHTML='';
+    alarms.forEach((a,idx)=>{
+      const card=document.createElement('div');
+      card.className='alarm-card';
+      const timeDiv=document.createElement('div'); timeDiv.textContent=a.hour+':'+a.min;
+      const actions=document.createElement('div');
+      const toggle=document.createElement('div'); toggle.className='toggle'+(a.enabled?' on':'');
+      const thumb=document.createElement('div'); thumb.className='thumb'; toggle.appendChild(thumb);
+      toggle.addEventListener('click',()=>{ a.enabled=!a.enabled; renderAlarms(); });
+      actions.appendChild(toggle); card.appendChild(timeDiv); card.appendChild(actions);
+      alarmsContainer.appendChild(card);
+    });
+  }
+  alarmSetBtn.addEventListener('click',()=>{
+    const val=alarmTimeInput.value; if(!val) return alert(lang==='ja'?'時刻を選択してください':'Select time');
+    const [hh,mm]=val.split(':').map(Number);
+    alarms.push({hour:hh,min:mm,enabled:true});
+    renderAlarms(); alarmTimeInput.value='';
+  });
+
+  function checkAlarms(now){
+    alarms.forEach(a=>{
+      if(a.enabled && now.getHours()===a.hour && now.getMinutes()===a.min && now.getSeconds()===0){
+        alarmSound.play();
+        alert(lang==='ja'?'アラーム':'Alarm');
+      }
+    });
+  }
+});
+</script>
+</body>
+</html>
